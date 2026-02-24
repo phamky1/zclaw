@@ -57,7 +57,116 @@ Có ba kênh chính để giao tiếp với thiết bị:
 
 ---
 
-## 3. Phân tích kiến trúc
+## 3. Sử dụng LLM cục bộ (Ollama) với ESP32
+
+zclaw hỗ trợ kết nối tới một **LLM chạy trên máy tính hoặc server local** thông qua [Ollama](https://ollama.com), không cần API key của bên thứ ba. ESP32 gửi yêu cầu qua WiFi tới server Ollama trong cùng mạng nội bộ.
+
+### Cách thức hoạt động
+
+```
+ESP32 ──WiFi──► Máy tính/Server chạy Ollama (cùng mạng LAN)
+                  http://<IP>:11434/v1/chat/completions
+```
+
+ESP32 sử dụng giao thức **OpenAI-compatible** (giống OpenAI và OpenRouter), do đó không cần thay đổi firmware để dùng Ollama.
+
+### Yêu cầu
+
+1. Máy tính hoặc server cùng mạng WiFi với ESP32.
+2. [Ollama](https://ollama.com/download) đã được cài đặt và đang chạy.
+3. Model đã được tải về trên máy Ollama (mặc định: `qwen3:8b`).
+
+### Bước 1 — Cài đặt và chạy Ollama
+
+```bash
+# Tải và cài Ollama (macOS/Linux)
+curl -fsSL https://ollama.com/install.sh | sh
+
+# Tải model (ví dụ: qwen3:8b — phù hợp với phần cứng RAM thấp)
+ollama pull qwen3:8b
+
+# Chạy Ollama, cho phép kết nối từ mạng LAN
+OLLAMA_HOST=0.0.0.0 ollama serve
+```
+
+> **Lưu ý:** Mặc định Ollama chỉ lắng nghe trên `127.0.0.1`. Cần đặt `OLLAMA_HOST=0.0.0.0` để ESP32 truy cập từ mạng nội bộ.
+
+### Bước 2 — Tìm địa chỉ IP của máy chạy Ollama
+
+```bash
+# macOS
+ipconfig getifaddr en0
+
+# Linux
+ip route get 1 | awk '{print $NF; exit}'
+```
+
+### Bước 3 — Nạp cấu hình vào ESP32
+
+```bash
+./scripts/provision.sh --port /dev/cu.usbmodem1101 \
+  --backend ollama \
+  --api-url http://<IP-máy-Ollama>:11434 \
+  --model qwen3:8b
+```
+
+Script tự chuẩn hóa URL: chấp nhận dạng base (`http://192.168.1.10:11434`), `/v1`, hoặc đường dẫn đầy đủ (`/v1/chat/completions`).
+
+Hoặc chạy theo chế độ tương tác (không dùng `--yes`):
+
+```bash
+./scripts/provision.sh --port /dev/cu.usbmodem1101
+# Chọn "ollama" khi được hỏi về LLM provider
+# Nhập URL endpoint của Ollama
+```
+
+### Bước 4 — Kiểm tra kết nối
+
+```bash
+./scripts/web-relay.sh
+# Gửi tin nhắn thử: "xin chào"
+```
+
+Hoặc quan sát log trực tiếp:
+
+```bash
+./scripts/monitor.sh /dev/cu.usbmodem1101
+```
+
+Log thành công sẽ hiển thị:
+```
+Backend: Ollama, Model: qwen3:8b
+```
+
+### Lựa chọn model
+
+| Model | RAM tối thiểu máy | Đặc điểm |
+|---|---|---|
+| `qwen3:8b` (mặc định) | ~6 GB | Cân bằng tốc độ/chất lượng |
+| `llama3.2:3b` | ~2 GB | Nhẹ hơn, phù hợp máy yếu |
+| `phi4-mini` | ~2 GB | Nhỏ gọn, phản hồi nhanh |
+| `mistral:7b` | ~5 GB | Chất lượng cao |
+
+Thay đổi model bất kỳ lúc nào (không cần flash lại):
+
+```bash
+./scripts/provision.sh --port /dev/cu.usbmodem1101 \
+  --backend ollama \
+  --api-url http://<IP>:11434 \
+  --model llama3.2:3b
+```
+
+### Lưu ý quan trọng
+
+- **Không cần API key**: Ollama backend bỏ qua trường `api_key`. Nếu Ollama server yêu cầu xác thực, truyền token qua `--api-key`.
+- **Chỉ dùng HTTP (không TLS)**: zclaw kết nối Ollama qua HTTP thuần. Không dùng HTTPS trừ khi có reverse proxy với cert hợp lệ trong cert bundle của ESP-IDF.
+- **Độ trễ phụ thuộc phần cứng**: Tốc độ sinh token của Ollama phụ thuộc vào CPU/GPU máy host, không liên quan tới ESP32.
+- **Cùng mạng WiFi**: ESP32 và máy Ollama phải ở cùng mạng nội bộ (hoặc ESP32 có thể định tuyến tới server Ollama).
+- **URL được lưu trong NVS**: Sau khi provision, URL Ollama được lưu vào flash NVS với key `llm_api_url` và tồn tại qua các lần reboot.
+
+---
+
+## 4. Phân tích kiến trúc
 
 ### Sơ đồ tổng quan
 
